@@ -4,6 +4,23 @@ All notable changes to SCD Studio are documented here.
 
 ## Unreleased
 
+## 0.2.1 — 2026-11-02
+
+- Let the Configuration tab and Decomposition and Edition sidebars scroll on
+  short screens, and remove the main window's fixed minimum size.
+- Paint checkbox indicators, spin-box arrows and remove-button crosses for
+  consistent rendering across platforms. Improve channel-entry layouts, centre
+  channel-allocation tick labels and prevent tab titles from being elided.
+- Show auxiliary channels with blank units in the channel-rejection legend,
+  falling back to the channel name.
+- Continue channel rejection only after confirmation, and tear down its active
+  view when applying a new configuration.
+- Reset pending decomposition setup when applying a new configuration, and
+  refuse configuration changes while a decomposition is running.
+- Correct the HD04MM1305 and HD08MM1305 electrode layouts to 13 rows by 5 columns.
+
+## 0.2.0 — 2026-10-15
+
 - Rename the public application, distribution, repository references, command,
   Windows executable and release artifacts from SCD Edition to SCD Studio.
   Retain `scd-edition` as a command alias and preserve existing Python imports,

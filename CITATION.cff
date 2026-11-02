@@ -8,8 +8,8 @@ authors:
     email: "agnese.grison@outlook.it"
     affiliation: "Imperial College London"
 title: "SCD Studio"
-version: "0.2.0"
-date-released: "2026-10-15"
+version: "0.2.1"
+date-released: "2026-11-02"
 license: BSD-3-Clause
 repository-code: "https://github.com/AgneGris/scd-studio"
 url: "https://github.com/AgneGris/scd-studio"

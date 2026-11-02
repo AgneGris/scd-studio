@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scd-studio"
-version = "0.2.0"
+version = "0.2.1"
 description = "Desktop application for SCD decomposition, editing, and visualisation"
 readme = "README.md"
 license = "BSD-3-Clause"
