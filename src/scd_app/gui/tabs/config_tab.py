@@ -10,8 +10,8 @@ import re
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIntValidator
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QIntValidator, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -45,6 +45,7 @@ from scd_app.gui.style.styling import (
     get_label_style,
 )
 from scd_app.gui.widgets.import_data_dialog import ImportDataDialog
+from scd_app.gui.widgets.vertical_scroll_area import VerticalScrollArea
 from scd_app.io.data_inspector import inspect_recording
 from scd_app.io.data_loader import (
     can_read_field,
@@ -55,6 +56,58 @@ from scd_app.io.data_loader import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SECONDARY_BUTTON_STYLE = f"""
+    QPushButton {{
+        background-color: transparent;
+        color: {COLORS["text_dim"]};
+        border: 1px solid {COLORS["border"]};
+        border-radius: 4px;
+        padding: 8px 16px;
+        font-size: {FONT_SIZES["normal"]};
+    }}
+    QPushButton:hover {{
+        background-color: {COLORS["background_hover"]};
+        color: {COLORS["foreground"]};
+    }}
+    QPushButton:disabled {{
+        color: {COLORS["text_muted"]};
+        border-color: {COLORS["background_hover"]};
+    }}
+"""
+
+
+class _RemoveButton(QPushButton):
+    """Round button with a painted cross that turns red on hover."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: transparent;
+                border-radius: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS["error"]}40;
+            }}
+        """
+        )
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        color = COLORS["error_bright"] if self.underMouse() else COLORS["text_muted"]
+        pen = QPen(QColor(color), 1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(pen)
+        centre = QRectF(self.rect()).center()
+        arm = 3.5
+        painter.drawLine(centre + QPointF(-arm, -arm), centre + QPointF(arm, arm))
+        painter.drawLine(centre + QPointF(-arm, arm), centre + QPointF(arm, -arm))
 
 
 class ChannelAllocationBar(QFrame):
@@ -91,14 +144,16 @@ class ChannelAllocationBar(QFrame):
             return
 
         from PySide6.QtCore import QRect
-        from PySide6.QtGui import QColor, QFont, QPainter, QPen
+        from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         margin = 10
         bar_height = 25
-        bar_y = (self.height() - bar_height) // 2
+        font = QFont(FONT_FAMILY, 8)
+        tick_metrics = QFontMetrics(font)
+        bar_y = (self.height() - bar_height - tick_metrics.height()) // 2
         bar_width = self.width() - 2 * margin
 
         bg_rect = QRect(margin, bar_y, bar_width, bar_height)
@@ -107,15 +162,18 @@ class ChannelAllocationBar(QFrame):
         painter.drawRoundedRect(bg_rect, 3, 3)
 
         painter.setPen(QPen(QColor(COLORS["text_muted"]), 1))
-        font = QFont(FONT_FAMILY, 8)
         painter.setFont(font)
 
         ticks = [0, 64, 128, 192, self.max_channels]
         ticks = [t for t in ticks if t <= self.max_channels]
+        label_y = bar_y + bar_height + tick_metrics.ascent()
         for ch in ticks:
             x = margin + int((ch / self.max_channels) * bar_width)
             painter.drawLine(x, bar_y, x, bar_y + bar_height)
-            painter.drawText(x - 10, bar_y + bar_height + 15, f"{ch}")
+            label = f"{ch}"
+            label_width = tick_metrics.horizontalAdvance(label)
+            label_x = min(max(x - label_width // 2, 0), self.width() - label_width)
+            painter.drawText(label_x, label_y, label)
 
         for start_ch, end_ch, name, color in self.allocations:
             if end_ch > self.max_channels:
@@ -330,24 +388,11 @@ class GridCard(QFrame):
         main_layout.addWidget(self.status_label, stretch=1)
 
         # Remove
-        self.remove_btn = QPushButton("×")
+        self.remove_btn = _RemoveButton()
         self.remove_btn.setFixedSize(32, 32)
         self.remove_btn.setToolTip("Remove Grid")
+        self.remove_btn.setAccessibleName("Remove Grid")
         self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
-        self.remove_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {COLORS["text_muted"]};
-                border-radius: 10px;
-                font-weight: bold; font-size: 18pt;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["error"]}40;
-                color: {COLORS["error_bright"]};
-            }}
-        """
-        )
         main_layout.addWidget(self.remove_btn)
 
         self._on_type_change()
@@ -568,7 +613,6 @@ class AuxChannelCard(QFrame):
 
         # MVC value
         mvc_label = QLabel("MVC:")
-        mvc_label.setFixedWidth(32)
         mvc_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
@@ -596,8 +640,8 @@ class AuxChannelCard(QFrame):
         mvc_browse.clicked.connect(self._browse_mvc_file)
         mvc_browse.setStyleSheet(
             f"QPushButton {{ background: {COLORS['background_input']}; "
-            f"color: {COLORS['text_muted']}; border: 1px solid {COLORS['border']}; "
-            f"border-radius: 3px; font-size: {FONT_SIZES['small']}; }}"
+            f"color: {COLORS['text_dim']}; border: 1px solid {COLORS['border']}; "
+            f"border-radius: 3px; padding: 0px; font-size: {FONT_SIZES['small']}; }}"
             f"QPushButton:hover {{ background: {COLORS['background_hover']}; "
             f"color: {COLORS['foreground']}; }}"
         )
@@ -606,28 +650,14 @@ class AuxChannelCard(QFrame):
         # Status
         self.status_label = QLabel()
         self.status_label.setStyleSheet(get_label_style(size="small"))
-        self.status_label.setMaximumWidth(80)
         main_layout.addWidget(self.status_label)
 
         # Remove
-        self.remove_btn = QPushButton("×")
+        self.remove_btn = _RemoveButton()
         self.remove_btn.setFixedSize(20, 20)
         self.remove_btn.setToolTip("Remove Channel")
+        self.remove_btn.setAccessibleName("Remove Channel")
         self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
-        self.remove_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {COLORS["text_muted"]};
-                border-radius: 10px;
-                font-weight: bold; font-size: 14pt;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["error"]}40;
-                color: {COLORS["error_bright"]};
-            }}
-        """
-        )
         main_layout.addWidget(self.remove_btn)
 
     def _apply_styling(self):
@@ -791,7 +821,11 @@ class ConfigTab(QWidget):
         self._show_initial_state()
 
     def _setup_ui(self):
-        main_layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        content = QWidget()
+        main_layout = QVBoxLayout(content)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(15)
 
@@ -802,6 +836,8 @@ class ConfigTab(QWidget):
         main_layout.addWidget(self._create_file_section(), stretch=0)
         main_layout.addWidget(self._create_channels_section(), stretch=1)
         main_layout.addWidget(self._create_summary_section(), stretch=0)
+
+        outer_layout.addWidget(VerticalScrollArea(content))
 
     def _create_file_section(self) -> QGroupBox:
         group = QGroupBox("1. Load EMG Data")
@@ -863,9 +899,7 @@ class ConfigTab(QWidget):
             "NumPy, CSV, or text recording."
         )
         self.inspect_arrays_btn.clicked.connect(self._inspect_selected_file)
-        self.inspect_arrays_btn.setStyleSheet(
-            get_button_style(bg_color="background_light", padding=8)
-        )
+        self.inspect_arrays_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
         loader_layout.addWidget(loader_label)
         loader_layout.addWidget(self.loader_combo, stretch=1)
         loader_layout.addWidget(self.inspect_arrays_btn)
@@ -1009,22 +1043,7 @@ class ConfigTab(QWidget):
 
         clear_btn = QPushButton("Clear All")
         clear_btn.clicked.connect(self._clear_all_channels)
-        clear_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {COLORS["text_muted"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 4px;
-                padding: 8px 12px;
-                font-size: {FONT_SIZES["normal"]};
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["background_hover"]};
-                color: {COLORS["foreground"]};
-            }}
-        """
-        )
+        clear_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
 
         self.skip_quaternions_cb = QCheckBox("Skip Quaternions (Novecento)")
         self.skip_quaternions_cb.setChecked(True)
@@ -1085,11 +1104,26 @@ class ConfigTab(QWidget):
         """
         )
 
+        # Only the list itself, so the cards' labels stay transparent.
         scroll_content = QWidget()
-        scroll_content.setStyleSheet(f"background-color: {COLORS['background']};")
+        scroll_content.setObjectName("ChannelList")
+        scroll_content.setStyleSheet(
+            f"#ChannelList {{ background-color: {COLORS['background']}; }}"
+        )
         self.channels_layout = QVBoxLayout(scroll_content)
         self.channels_layout.setSpacing(6)
         self.channels_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Each heading shows once a card of its kind is added.
+        self.grid_heading = QLabel("GRIDS")
+        self.aux_heading = QLabel("AUXILIARY CHANNELS")
+        for heading in (self.grid_heading, self.aux_heading):
+            heading.setStyleSheet(
+                get_label_style(color="text_dim", size="small", bold=True, margin_top=8)
+            )
+            heading.hide()
+            self.channels_layout.addWidget(heading)
+        self.channels_layout.addStretch()
 
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll, stretch=1)
@@ -1112,41 +1146,11 @@ class ConfigTab(QWidget):
 
         save_btn = QPushButton("Save Config")
         save_btn.clicked.connect(self._save_config)
-        save_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {COLORS["text_muted"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-size: {FONT_SIZES["normal"]};
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["background_hover"]};
-                color: {COLORS["foreground"]};
-            }}
-        """
-        )
+        save_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
 
         load_btn = QPushButton("Load Config")
         load_btn.clicked.connect(self._load_config)
-        load_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {COLORS["text_muted"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-size: {FONT_SIZES["normal"]};
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["background_hover"]};
-                color: {COLORS["foreground"]};
-            }}
-        """
-        )
+        load_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
 
         bottom_layout.addWidget(save_btn)
         bottom_layout.addWidget(load_btn)
@@ -1584,7 +1588,9 @@ class ConfigTab(QWidget):
         card.start_spin.valueChanged.connect(self._update_summary)
         card.end_spin.valueChanged.connect(self._update_summary)
 
-        self.channels_layout.insertWidget(len(self.grid_cards), card)
+        self.channels_layout.insertWidget(
+            self.channels_layout.indexOf(self.aux_heading), card
+        )
         self.grid_cards.append(card)
 
         # Only set the start of the NEW card based on where the previous one ends
@@ -1682,7 +1688,9 @@ class ConfigTab(QWidget):
         card.start_spin.valueChanged.connect(self._update_summary)
         card.end_spin.valueChanged.connect(self._update_summary)
 
-        self.channels_layout.insertWidget(len(self.grid_cards), card)
+        self.channels_layout.insertWidget(
+            self.channels_layout.indexOf(self.aux_heading), card
+        )
         self.grid_cards.append(card)
         return card
 
@@ -1704,8 +1712,7 @@ class ConfigTab(QWidget):
         card.changed.connect(self._update_summary)
 
         # Aux cards insert after all grids, before trailing stretch
-        insert_pos = len(self.grid_cards) + len(self.aux_cards)
-        self.channels_layout.insertWidget(insert_pos, card)
+        self.channels_layout.insertWidget(self.channels_layout.count() - 1, card)
         self.aux_cards.append(card)
         self._update_summary()
 
@@ -1887,6 +1894,8 @@ class ConfigTab(QWidget):
         self.channel_summary_label.setText(
             " · ".join(parts) if parts else "No channels"
         )
+        self.grid_heading.setVisible(n_grids > 0)
+        self.aux_heading.setVisible(n_aux > 0)
 
         # Apply button
         if not self.emg_path or not self.grid_cards:

@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -45,6 +44,7 @@ from scd_app.gui.style.styling import (
     FONT_SIZES,
     get_section_header_style,
 )
+from scd_app.gui.widgets.vertical_scroll_area import VerticalScrollArea
 
 logger = logging.getLogger(__name__)
 
@@ -201,11 +201,6 @@ class DecompositionTab(QWidget):
         outer_layout.setSpacing(0)
 
         # ── Scrollable content ────────────────────────────────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -316,7 +311,7 @@ class DecompositionTab(QWidget):
         sel_layout.addWidget(QLabel("Select Grid:"))
         self.grid_selector = QComboBox()
         self.grid_selector.currentIndexChanged.connect(self._on_grid_changed)
-        sel_layout.addWidget(self.grid_selector)
+        sel_layout.addWidget(self.grid_selector, stretch=1)
         layout.addLayout(sel_layout)
 
         self.param_stack = QStackedWidget()
@@ -324,14 +319,13 @@ class DecompositionTab(QWidget):
 
         layout.addStretch()
 
-        scroll.setWidget(content)
-        outer_layout.addWidget(scroll, stretch=1)
+        outer_layout.addWidget(VerticalScrollArea(content), stretch=1)
 
         # ── Always-visible buttons ────────────────────────────────────────────
         btn_container = QWidget()
         btn_container_layout = QVBoxLayout(btn_container)
         btn_container_layout.setContentsMargins(10, 5, 10, 10)
-        btn_container_layout.setSpacing(0)
+        btn_container_layout.setSpacing(8)
 
         btn_layout = QHBoxLayout()
 
@@ -575,8 +569,11 @@ class DecompositionTab(QWidget):
                 "electrode_class": port.electrode.type,
             }
 
-            self.grid_selector.addItem(
-                f"{port.name} ({port.electrode.name})", port.name
+            self.grid_selector.addItem(port.name, port.name)
+            self.grid_selector.setItemData(
+                self.grid_selector.count() - 1,
+                port.electrode.name,
+                Qt.ItemDataRole.ToolTipRole,
             )
 
             page = self._create_param_page(port.name, defaults, electrode_type_label)

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import torch
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,7 +45,6 @@ class MainWindow(QMainWindow):
 
         # Dynamically size to screen
         screen = QApplication.primaryScreen().availableGeometry()
-        self.setMinimumSize(min(1400, screen.width()), min(1000, screen.height()))
         self.resize(
             min(1400, int(screen.width() * 0.95)),
             min(1000, int(screen.height() * 0.95)),
@@ -71,6 +70,8 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.tabs = QTabWidget()
+        # macOS elides tab titles even when they fit.
+        self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
 
         # 1. Configuration Tab
         self.config_tab = ConfigTab()
