@@ -174,6 +174,15 @@ class MainWindow(QMainWindow):
 
     def _on_config_applied(self, config: SessionConfig, emg_paths: list):
         """Handle the 'Apply' event from the Configuration tab."""
+        # The running worker reads the grid configs that setup_session rebuilds
+        if self.decomp_tab.has_running_worker():
+            QMessageBox.warning(
+                self,
+                "Decomposition Running",
+                "Stop the running decomposition before applying a new configuration.",
+            )
+            return
+
         self.config = config
 
         # Update Edition tab sampling rate and aux channel configs (for MVC lookup on load)

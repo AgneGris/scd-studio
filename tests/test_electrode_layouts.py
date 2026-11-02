@@ -20,6 +20,19 @@ def test_electrode_layout_mapping_is_complete_and_in_bounds(name):
     )
 
 
+def test_layout_shapes_match_configuration_options():
+    from scd_app.gui.tabs.config_tab import GridCard
+
+    mismatches = {
+        option: {"configured": (spec["rows"], spec["cols"]), "drawn": shape}
+        for options in GridCard.ELECTRODE_CONFIGS.values()
+        for option, spec in options.items()
+        if (layout := get_grid_config(option)) is not None
+        and (shape := layout["grid_shape"]) != (spec["rows"], spec["cols"])
+    }
+    assert mismatches == {}
+
+
 @pytest.mark.parametrize(
     ("electrode_type", "canonical_name"),
     [
