@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -45,6 +44,7 @@ from scd_app.gui.style.styling import (
     FONT_SIZES,
     get_section_header_style,
 )
+from scd_app.gui.widgets.vertical_scroll_area import VerticalScrollArea
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,8 @@ class DecompositionTab(QWidget):
 
         # Matplotlib cleanup
         self.cid = None
+        # Closes the channel-rejection view while it is open
+        self._abort_channel_rejection = None
         self._setup_cancelled = False
         self._discard_on_stop = False  # True = stop now (discard), False = save on stop
         self._shutdown_requested = False
@@ -137,6 +139,9 @@ class DecompositionTab(QWidget):
 
     def setup_session(self, config: SessionConfig, emg_paths: list) -> bool:
         """Called by MainWindow when Configuration is applied."""
+        # Tear down an open channel-rejection view, even if loading fails below
+        self._cleanup_matplotlib_widgets()
+
         if not emg_paths:
             QMessageBox.critical(self, "Load Error", "No EMG files were selected.")
             return False
@@ -160,23 +165,9 @@ class DecompositionTab(QWidget):
             return False
         self._load_grid_configs()
 
-        # Show a ready prompt — channel rejection + RMS happen when user clicks Start
-        self.figure.clf()
-        self.figure.set_facecolor(COLORS["background"])
-        ax = self.figure.add_subplot(111)
-        ax.set_facecolor(COLORS["background"])
-        ax.text(
-            0.5,
-            0.5,
-            "Session loaded.\nClick  'Start Decomposition'  to begin.",
-            color=COLORS["text_muted"],
-            fontsize=14,
-            ha="center",
-            va="center",
-            transform=ax.transAxes,
-        )
-        ax.axis("off")
-        self.canvas.draw()
+        # Drop the previous session's setup; a running decomposition keeps its Stop
+        if not self.has_running_worker():
+            self._reset_ui_state()
 
         logger.info(
             "Decomposition tab ready: %s grids, %s files",
@@ -210,11 +201,6 @@ class DecompositionTab(QWidget):
         outer_layout.setSpacing(0)
 
         # ── Scrollable content ────────────────────────────────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -325,7 +311,7 @@ class DecompositionTab(QWidget):
         sel_layout.addWidget(QLabel("Select Grid:"))
         self.grid_selector = QComboBox()
         self.grid_selector.currentIndexChanged.connect(self._on_grid_changed)
-        sel_layout.addWidget(self.grid_selector)
+        sel_layout.addWidget(self.grid_selector, stretch=1)
         layout.addLayout(sel_layout)
 
         self.param_stack = QStackedWidget()
@@ -333,14 +319,13 @@ class DecompositionTab(QWidget):
 
         layout.addStretch()
 
-        scroll.setWidget(content)
-        outer_layout.addWidget(scroll, stretch=1)
+        outer_layout.addWidget(VerticalScrollArea(content), stretch=1)
 
         # ── Always-visible buttons ────────────────────────────────────────────
         btn_container = QWidget()
         btn_container_layout = QVBoxLayout(btn_container)
         btn_container_layout.setContentsMargins(10, 5, 10, 10)
-        btn_container_layout.setSpacing(0)
+        btn_container_layout.setSpacing(8)
 
         btn_layout = QHBoxLayout()
 
@@ -584,8 +569,11 @@ class DecompositionTab(QWidget):
                 "electrode_class": port.electrode.type,
             }
 
-            self.grid_selector.addItem(
-                f"{port.name} ({port.electrode.name})", port.name
+            self.grid_selector.addItem(port.name, port.name)
+            self.grid_selector.setItemData(
+                self.grid_selector.count() - 1,
+                port.electrode.name,
+                Qt.ItemDataRole.ToolTipRole,
             )
 
             page = self._create_param_page(port.name, defaults, electrode_type_label)
@@ -1061,8 +1049,11 @@ class DecompositionTab(QWidget):
                     peak = max(abs(sig.max()), abs(sig.min()), 1e-9)
                     # Scale to span ~70 % of total channel height, centred
                     sig_scaled = sig / peak * (0.35 * total_height) + total_height / 2
+                    # A blank unit is saved as "", which legend() skips
                     label = (
-                        a.get("unit", a.get("name", "force")) if first_label else "_"
+                        (a.get("unit") or a.get("name") or "force")
+                        if first_label
+                        else "_"
                     )
                     ax.plot(
                         sig_scaled,
@@ -1406,6 +1397,7 @@ class DecompositionTab(QWidget):
                     draw_grid(nav["current"])
 
             def on_confirm(event):
+                nav["confirmed"] = True
                 disconnect()
                 self.figure.clf()
                 self.figure.set_facecolor(COLORS["background"])
@@ -1480,11 +1472,30 @@ class DecompositionTab(QWidget):
             nav["buttons"] = []
 
         event_loop = QEventLoop()
-        draw_grid(0)
-        event_loop.exec()
+
+        def abort():
+            # Unhook the "Show force" CheckButtons before the canvas is reused
+            disconnect()
+            event_loop.quit()
+
+        self._abort_channel_rejection = abort
+        try:
+            draw_grid(0)
+            event_loop.exec()
+        finally:
+            self._abort_channel_rejection = None
+
+        # Anything but Confirm (Cancel, abort, closing the app) cancels the setup
+        if not nav.get("confirmed"):
+            disconnect()
+            self._setup_cancelled = True
 
     def _cleanup_matplotlib_widgets(self):
         """Disconnect all active matplotlib event handlers before redrawing the canvas."""
+        if self._abort_channel_rejection is not None:
+            self._abort_channel_rejection()
+            self._abort_channel_rejection = None
+
         if self.cid is not None:
             self.canvas.mpl_disconnect(self.cid)
             self.cid = None

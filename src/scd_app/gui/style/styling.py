@@ -1,7 +1,9 @@
 import logging
 from pathlib import Path
 
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPen, QPolygonF
+from PySide6.QtWidgets import QAbstractSpinBox, QCheckBox, QProxyStyle, QStyle
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +215,122 @@ def load_font(font_type="Lexend"):
     return font_type
 
 
+def _glyph_pen(color: str, width: float) -> QPen:
+    pen = QPen(QColor(color), width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
+
+
+class _ThemeStyle(QProxyStyle):
+    """Paints checkbox indicators and spin box arrows in COLORS.
+
+    Style sheets can only draw them as images, so the sheet must leave them unstyled.
+    """
+
+    def pixelMetric(self, metric, option=None, widget=None):
+        if metric in (
+            QStyle.PixelMetric.PM_IndicatorWidth,
+            QStyle.PixelMetric.PM_IndicatorHeight,
+        ):
+            return 24
+        return super().pixelMetric(metric, option, widget)
+
+    def subElementRect(self, element, option, widget=None):
+        # macOS lays checkboxes out at its smaller native size.
+        if element == QStyle.SubElement.SE_CheckBoxLayoutItem:
+            return option.rect
+        return super().subElementRect(element, option, widget)
+
+    def polish(self, target):
+        # The indicator's border lightens on hover.
+        if isinstance(target, QCheckBox):
+            target.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        return super().polish(target)
+
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if element == QStyle.PrimitiveElement.PE_IndicatorCheckBox:
+            self._draw_check_box(option, painter)
+        elif element == QStyle.PrimitiveElement.PE_IndicatorSpinUp:
+            self._draw_spin_arrow(option, painter, up=True)
+        elif element == QStyle.PrimitiveElement.PE_IndicatorSpinDown:
+            self._draw_spin_arrow(option, painter, up=False)
+        else:
+            super().drawPrimitive(element, option, painter, widget)
+
+    @staticmethod
+    def _draw_check_box(option, painter):
+        enabled = bool(option.state & QStyle.StateFlag.State_Enabled)
+        checked = bool(option.state & QStyle.StateFlag.State_On)
+        if not enabled:
+            fill, border = COLORS["background_input"], COLORS["border"]
+        elif checked:
+            fill, border = COLORS["accent"], COLORS["accent"]
+        else:
+            fill, border = COLORS["background"], COLORS["border"]
+        if enabled and option.state & QStyle.StateFlag.State_MouseOver:
+            border = COLORS["accent_hover"]
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        box = QRectF(option.rect).adjusted(1, 1, -1, -1)
+        painter.setPen(QPen(QColor(border), 2))
+        painter.setBrush(QColor(fill))
+        painter.drawRoundedRect(box, 4, 4)
+        if checked:
+            tick = COLORS["foreground"] if enabled else COLORS["text_muted"]
+            painter.setPen(_glyph_pen(tick, 2))
+            centre = box.center()
+            painter.drawPolyline(
+                QPolygonF(
+                    [
+                        centre + QPointF(-4.5, 0),
+                        centre + QPointF(-1.5, 3),
+                        centre + QPointF(4.5, -3.5),
+                    ]
+                )
+            )
+        painter.restore()
+
+    @staticmethod
+    def _draw_spin_arrow(option, painter, *, up: bool):
+        step = (
+            QAbstractSpinBox.StepEnabledFlag.StepUpEnabled
+            if up
+            else QAbstractSpinBox.StepEnabledFlag.StepDownEnabled
+        )
+        button = (
+            QStyle.SubControl.SC_SpinBoxUp if up else QStyle.SubControl.SC_SpinBoxDown
+        )
+        if not (option.state & QStyle.StateFlag.State_Enabled) or not (
+            option.stepEnabled & step
+        ):
+            color = COLORS["text_muted"]
+        elif option.state & QStyle.StateFlag.State_MouseOver and (
+            option.activeSubControls & button
+        ):
+            color = COLORS["foreground"]
+        else:
+            color = COLORS["text_dim"]
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(_glyph_pen(color, 1.5))
+        # Keep clear of the frame's right border.
+        centre = QRectF(option.rect).center() - QPointF(1.5, 0)
+        tip = -1.5 if up else 1.5
+        painter.drawPolyline(
+            QPolygonF(
+                [
+                    centre + QPointF(-3, -tip),
+                    centre + QPointF(0, tip),
+                    centre + QPointF(3, -tip),
+                ]
+            )
+        )
+        painter.restore()
+
+
 def set_style_sheet(widget, font_type="Lexend"):
     """
     Modern dark theme with Imperial Blue and Lexend font.
@@ -223,6 +341,7 @@ def set_style_sheet(widget, font_type="Lexend"):
     # arrow is an image; the SVG strokes match text_dim and foreground.
     icon_dir = (Path(__file__).parent / "icons").as_posix()
 
+    widget.setStyle(_ThemeStyle())
     return widget.setStyleSheet(
         f"""
             /* ========== BASE WIDGET ========== */
@@ -425,30 +544,8 @@ def set_style_sheet(widget, font_type="Lexend"):
                 font-size: {FONT_SIZES["normal"]};
             }}
 
-            QCheckBox::indicator {{
-                width: 20px;
-                height: 20px;
-                border: 2px solid {COLORS["border"]};
-                border-radius: 4px;
-                background-color: {COLORS["background"]};
-            }}
-
-            QCheckBox::indicator:checked {{
-                background-color: {COLORS["accent"]};
-                border: 2px solid {COLORS["accent"]};
-            }}
-
-            QCheckBox::indicator:hover {{
-                border: 2px solid {COLORS["accent_hover"]};
-            }}
-
             QCheckBox:disabled {{
                 color: {COLORS["text_muted"]};
-            }}
-
-            QCheckBox::indicator:disabled {{
-                background-color: {COLORS["background_input"]};
-                border-color: {COLORS["border"]};
             }}
 
             /* ========== RADIO BUTTON ========== */
@@ -540,7 +637,7 @@ def set_style_sheet(widget, font_type="Lexend"):
                 subcontrol-position: top left;
                 left: 16px;
                 padding: 4px 12px;
-                color: {COLORS["accent"]};
+                color: {COLORS["info"]};
                 background-color: {COLORS["background"]};
                 border-radius: 4px;
             }}

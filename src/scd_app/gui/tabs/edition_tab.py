@@ -7,12 +7,13 @@ is shown as a shaded band on the source plot.
 """
 
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -95,6 +96,7 @@ from scd_app.gui.widgets.source_plot_widget import (
     SelectionArm,
     SourcePlotWidget,
 )
+from scd_app.gui.widgets.vertical_scroll_area import VerticalScrollArea
 from scd_app.io.atomic_pickle import atomic_pickle_dump
 from scd_app.io.audit_report import write_audit_report
 from scd_app.io.decomposition_loader import load_decomposition_file
@@ -112,6 +114,29 @@ from scd_app.io.edition_session import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _MuapLayoutWidget(pg.GraphicsLayoutWidget):
+    """MUAP view whose minimum size fits the whole grid, so the sidebar scrolls."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ci.installEventFilter(self)
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        grid = self.ci.effectiveSizeHint(Qt.SizeHint.MinimumSize)
+        frame = 2 * self.frameWidth()
+        return QSize(
+            max(hint.width(), math.ceil(grid.width()) + frame),
+            max(hint.height(), math.ceil(grid.height()) + frame),
+        )
+
+    def eventFilter(self, obj, event):
+        if obj is self.ci and event.type() == QEvent.Type.LayoutRequest:
+            self.updateGeometry()
+        return super().eventFilter(obj, event)
+
 
 # ---------------------------------------------------------------------------
 # EditionTab
@@ -221,7 +246,7 @@ class EditionTab(QWidget):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(2)
-        splitter.addWidget(self._build_left_panel())
+        splitter.addWidget(VerticalScrollArea(self._build_left_panel()))
         splitter.addWidget(self._build_right_panel())
         splitter.setSizes([380, 1020])
         splitter.setStretchFactor(0, 3)
@@ -711,7 +736,7 @@ class EditionTab(QWidget):
         signal_row.addWidget(self.spike_signal_combo, stretch=1)
         lay.addLayout(signal_row)
 
-        self.muap_widget = pg.GraphicsLayoutWidget()
+        self.muap_widget = _MuapLayoutWidget()
         self.muap_widget.setBackground(COLORS["background"])
         self.muap_widget.setStyleSheet(
             f"border: 1px solid {COLORS['border']}; border-radius: 4px;"
